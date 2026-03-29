@@ -46,16 +46,15 @@ class ActionRegistry:
     """The ActionRegistry maintains a collection of available actions that the agent can execute, allowing for dynamic registration and retrieval of actions."""
 
     def __init__(self) -> None:
-        self.actions: dict[str, Action] = {}
+        self._actions: dict[str, Action] = {}
 
     def register(self, action: Action) -> None:
-        """Register a new action in the registry."""
-        self.actions[action.name] = action
+        if action.name in self._actions:
+            raise ValueError(f"Action '{action.name}' is already registered.")
+        self._actions[action.name] = action
 
     def get_action(self, name: str) -> Action | None:
-        """Retrieve an action by its name."""
-        return self.actions.get(name)
+        return self._actions.get(name)
 
     def list_actions(self) -> list[Action]:
-        """Get a list of all registered actions."""
-        return list(self.actions.values())
+        return list(self._actions.values())

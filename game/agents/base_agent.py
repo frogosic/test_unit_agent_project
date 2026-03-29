@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 from game.actions.action_context import ActionContext
 from game.core.core_action import ActionRegistry, Goal
 from game.core.environment import Environment
@@ -9,6 +10,10 @@ from game.languages.tool_calling import AgentLanguage
 from game.core.llm import LLM, build_tools
 from game.core.memory import Memory
 from game.policies.file_security_policy import FileSecurityPolicy
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
@@ -25,14 +30,14 @@ class BaseAgent:
         self.name = name
         self.goals = goals
         self.agent_language = agent_language
-        self.actions = action_registry
+        self.action_registry = action_registry
         self.llm = llm
         self.environment = environment
         self.file_security_policy = file_security_policy
 
     def _call_llm(self, full_prompt: list[dict[str, Any]]) -> Any:
         """Call the LLM with the given prompt and tools."""
-        tools = build_tools(self.actions)
+        tools = build_tools(self.action_registry)
         return self.llm.generate(full_prompt, tools=tools)
 
     def _build_execution_context(
@@ -51,10 +56,8 @@ class BaseAgent:
                 }
             )
 
-        return action_context.spawn_child(
-            current_agent_name=self.name,
-            llm=self.llm,
-            file_security_policy=self.file_security_policy,
+        return action_context.spawn_delegated_child(
+            next_agent_name=self.name,
         )
 
     def _execute_tool_calls(
@@ -64,10 +67,8 @@ class BaseAgent:
         action_context: ActionContext,
     ) -> bool:
         """Execute the given tool calls and update memory with the results."""
-        saw_terminal = False
-
         for tool_call in tool_calls:
-            action = self.actions.get_action(tool_call["name"])
+            action = self.action_registry.get_action(tool_call["name"])
 
             if action is None:
                 memory.add_tool_result(
@@ -79,8 +80,10 @@ class BaseAgent:
                 )
                 return True
 
-            print(
-                f"Executing action: {tool_call['name']} with args: {tool_call['args']}"
+            logger.debug(
+                "Executing action: %s with args: %s",
+                tool_call["name"],
+                tool_call["args"],
             )
 
             result = self.environment.execute_action(
@@ -88,7 +91,7 @@ class BaseAgent:
                 action_args=tool_call["args"],
                 action_context=action_context,
             )
-            print(f"Action Result: {result}")
+            logger.debug("Action Result: %s", result)
 
             memory.add_tool_result(tool_call["id"], result)
 
@@ -102,25 +105,25 @@ class BaseAgent:
                 return True
 
             if action.terminal:
-                saw_terminal = True
+                return True
 
-        return saw_terminal
+        return False
 
     def _think(self, memory: Memory) -> list[dict[str, Any]]:
         prompt = self.agent_language.construct_prompt(
-            actions=self.actions.list_actions(),
+            actions=self.action_registry.list_actions(),
             goals=self.goals,
             memory=memory,
         )
 
-        print("Agent thinking...")
+        logger.debug("Agent thinking...")
         response = self._call_llm(prompt)
 
         message = self.agent_language.get_message(response)
         memory.add_assistant_message(message)
 
         tool_calls = self.agent_language.get_tool_calls(message)
-        print(f"Tool calls: {tool_calls}")
+        logger.debug("Tool calls: %s", tool_calls)
 
         return tool_calls
 

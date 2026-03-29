@@ -45,11 +45,11 @@ def _extract_final_output(memory: Memory) -> str:
                 "enum": [
                     "file_ops_agent",
                     "test_design_agent",
-                    "reporting_agent",
+                    "test_writing_agent",
                 ],
                 "description": (
                     "The exact registered name of the specialist agent to call. "
-                    "Use only one of: file_ops_agent, test_design_agent, reporting_agent."
+                    "Use only one of: file_ops_agent, test_design_agent, test_writing_agent."
                 ),
             },
             "task": {

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+from textwrap import dedent
 
 from game.actions.action_context import ActionContext
 from game.agents.base_agent import BaseAgent
@@ -12,6 +14,8 @@ from game.core.memory import Memory
 from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import FileDiscoveryResult, SourceFile
 from game.policies.file_security_policy import FileSecurityPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class FileOpsAgent(BaseAgent):
@@ -32,15 +36,8 @@ class FileOpsAgent(BaseAgent):
                     priority=1,
                     name="inspect_source_files",
                     description=(
-                        "Inspect a requested file or directory, identify relevant Python source files, "
-                        "and read only the files needed to support downstream analysis.\n\n"
-                        "Rules:\n"
-                        "- If the user provides a specific Python file path, focus on that file only\n"
-                        "- Avoid irrelevant files such as __init__.py, caches, virtual environments, and test files unless explicitly needed\n"
-                        "- Prefer targeted inspection over broad exploration\n"
-                        "- Ground conclusions in actual file contents, not filenames alone\n"
-                        "- Stay within the allowed file-access policy\n"
-                        "- When enough relevant files have been read, stop"
+                        "Inspect a requested path, identify relevant Python source files, and read only "
+                        "the files needed for downstream unit test analysis."
                     ),
                 )
             ],
@@ -53,31 +50,50 @@ class FileOpsAgent(BaseAgent):
 
     def run_and_parse(
         self,
-        user_input: str,
+        target_directory: str,
         memory: Memory | None = None,
         max_iterations: int = 20,
         action_context: ActionContext | None = None,
     ) -> FileDiscoveryResult:
+        prompt = self._build_prompt(target_directory)
+
         run_memory = self.run(
-            user_input=user_input,
+            user_input=prompt,
             memory=memory,
             max_iterations=max_iterations,
             action_context=action_context,
         )
-        return self._extract_file_discovery_result(run_memory)
+        return self._extract_file_discovery_result(run_memory, target_directory)
 
-    def _extract_file_discovery_result(self, memory: Memory) -> FileDiscoveryResult:
+    def _build_prompt(self, target_directory: str) -> str:
+        return dedent(
+            f"""
+            You are a source file discovery specialist.
+
+            TARGET PATH
+            {target_directory}
+
+            RULES
+            - If the path is a Python file, read only that file
+            - If the path is a directory, identify only the Python files relevant for unit test generation
+            - Avoid test files, caches, virtual environments, and irrelevant support files
+            - Ground decisions in actual file contents
+            - Stop after enough relevant files have been inspected
+            """
+        ).strip()
+
+    def _extract_file_discovery_result(
+        self,
+        memory: Memory,
+        target_directory: str,
+    ) -> FileDiscoveryResult:
         memories = memory.get_memories()
 
-        requested_path: str | None = None
         read_results_by_tool_id: dict[str, str] = {}
         tool_name_by_id: dict[str, str] = {}
         tool_args_by_id: dict[str, dict] = {}
 
         for item in memories:
-            if item.get("role") == "user" and requested_path is None:
-                requested_path = self._extract_requested_path(item.get("content", ""))
-
             if item.get("role") == "assistant":
                 for tool_call in item.get("tool_calls", []):
                     tool_id = tool_call["id"]
@@ -121,10 +137,8 @@ class FileOpsAgent(BaseAgent):
             file_name = args.get("file_name")
             if not file_name:
                 continue
-
             if not file_name.endswith(".py"):
                 continue
-
             if Path(file_name).name == "__init__.py":
                 continue
 
@@ -141,16 +155,7 @@ class FileOpsAgent(BaseAgent):
                 "FileOpsAgent did not produce any readable Python source files."
             )
 
-        target_directory = requested_path or str(Path(files[0].path).parent)
         return FileDiscoveryResult(
             target_directory=target_directory,
             files=files,
         )
-
-    def _extract_requested_path(self, user_input: str) -> str | None:
-        marker = "'"
-        if marker in user_input:
-            parts = user_input.split(marker)
-            if len(parts) >= 2:
-                return parts[1].strip()
-        return None

@@ -85,8 +85,26 @@ RETURN_TEST_DESIGN_RESULT_ACTION = Action(
                                 "properties": {
                                     "name": {"type": "string"},
                                     "description": {"type": "string"},
+                                    "inputs": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                    "assertions": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                    "mock_targets": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
                                 },
-                                "required": ["name", "description"],
+                                "required": [
+                                    "name",
+                                    "description",
+                                    "inputs",
+                                    "assertions",
+                                    "mock_targets",
+                                ],
                             },
                         },
                         "notes": {

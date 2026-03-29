@@ -3,9 +3,7 @@ from __future__ import annotations
 import os
 
 from game.actions.action_context import ActionContext
-from game.core.core_action import ActionRegistry
 from game.bootstrap.decorators import action
-from game.bootstrap.registry import build_action_registry
 
 
 def _get_file_security_policy(action_context: ActionContext):
@@ -18,7 +16,7 @@ def _get_file_security_policy(action_context: ActionContext):
     return policy
 
 
-@action(tags=["file_operations"])
+@action()
 def list_directories(
     action_context: ActionContext,
     directory: str = ".",
@@ -45,7 +43,7 @@ def list_directories(
     )
 
 
-@action(tags=["file_operations"])
+@action()
 def list_files(
     action_context: ActionContext,
     directory: str = ".",
@@ -75,7 +73,7 @@ def list_files(
     return items
 
 
-@action(tags=["file_operations"])
+@action()
 def read_file(action_context: ActionContext, file_name: str) -> str:
     """
     Read the contents of a specific file.
@@ -92,7 +90,7 @@ def read_file(action_context: ActionContext, file_name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@action(terminal=True, tags=["control"])
+@action(terminal=True)
 def terminate(message: str) -> str:
     """
     End the agent loop with a short final answer.

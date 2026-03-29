@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import logging
+from dataclasses import asdict
+from pathlib import Path
+
 from game.actions.action_context import ActionContext
 from game.agents.base_agent import BaseAgent
 from game.agents.file_ops_agent import FileOpsAgent
@@ -12,9 +17,14 @@ from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import (
     GeneratedTestFile,
     TestDesignResult,
+    TestDesignTask,
+    TestWritingTask,
     UnitTestGenerationResult,
 )
 from game.policies.file_security_policy import FileSecurityPolicy
+from game.services.generated_test_file_writer import write_generated_test_file
+
+logger = logging.getLogger(__name__)
 
 
 class CoordinatorAgent(BaseAgent):
@@ -83,44 +93,61 @@ class CoordinatorAgent(BaseAgent):
         """
         Run the full unit test generation workflow for a target directory.
         """
+        logger.info("Starting unit test generation for: %s", target_directory)
+
         execution_context = self._build_execution_context(action_context)
 
         discovery_result = self.file_ops_agent.run_and_parse(
-            user_input=(
-                f"Inspect the target path '{target_directory}'. "
-                "If it is a specific Python file, read only that file. "
-                "If it is a directory, identify relevant Python source files for unit test generation "
-                "and read only the necessary files."
-            ),
+            target_directory=target_directory,
             action_context=execution_context,
         )
+
+        logger.info("Discovered %d source files", len(discovery_result.files))
 
         test_designs: list[TestDesignResult] = []
         generated_tests: list[GeneratedTestFile] = []
 
         for source_file in discovery_result.files:
+            logger.info("Processing: %s", source_file.path)
+
             test_design = self.test_design_agent.run_and_parse(
-                user_input=(
-                    f"Analyze the following Python source file for unit-testable behavior "
-                    f"and return a structured unit test design.\n\n"
-                    f"File path: {source_file.path}\n\n"
-                    f"Source code:\n{source_file.content}"
+                task=TestDesignTask(
+                    file_path=source_file.path,
+                    source_code=source_file.content,
                 ),
                 action_context=execution_context,
             )
             test_designs.append(test_design)
+            logger.info("Test design complete: %s", source_file.path)
 
             generated_test = self.test_writing_agent.run_and_parse(
-                user_input=(
-                    "Generate pytest unit tests from the following structured test design "
-                    "and return the final structured generated test file result.\n\n"
-                    f"Source file path: {test_design.file_path}\n"
-                    f"Module summary: {test_design.module_summary}\n"
-                    f"Test targets: {test_design.test_targets}"
+                task=TestWritingTask(
+                    source_file_path=test_design.file_path,
+                    source_code=source_file.content,
+                    module_summary=test_design.module_summary,
+                    test_targets=test_design.test_targets,
                 ),
-                action_context=execution_context,
             )
             generated_tests.append(generated_test)
+            logger.info("Tests generated: %s", source_file.path)
+
+            write_generated_test_file(
+                generated_test=generated_test,
+                file_security_policy=self.file_security_policy,
+            )
+
+            self._write_debug_snapshot(
+                source_file_path=source_file.path,
+                test_design=test_design,
+                generated_test=generated_test,
+            )
+
+        logger.info(
+            "Generation complete — files: %d, designs: %d, tests: %d",
+            len(discovery_result.files),
+            len(test_designs),
+            len(generated_tests),
+        )
 
         return UnitTestGenerationResult(
             target_directory=target_directory,
@@ -132,4 +159,27 @@ class CoordinatorAgent(BaseAgent):
                 f"designed {len(test_designs)} unit test suites, "
                 f"generated {len(generated_tests)} pytest test files."
             ),
+        )
+
+    def _write_debug_snapshot(
+        self,
+        source_file_path: str,
+        test_design: TestDesignResult,
+        generated_test: GeneratedTestFile,
+    ) -> None:
+        debug_dir = Path("debug/unit_test_generation")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        source_stem = Path(source_file_path).stem
+
+        design_path = debug_dir / f"{source_stem}_design.json"
+        generated_test_path = debug_dir / f"{source_stem}_generated_test.py"
+
+        design_path.write_text(
+            json.dumps(asdict(test_design), indent=2),
+            encoding="utf-8",
+        )
+        generated_test_path.write_text(
+            generated_test.pytest_code,
+            encoding="utf-8",
         )

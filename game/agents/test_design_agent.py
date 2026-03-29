@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+from textwrap import dedent
 
 from game.actions.action_context import ActionContext
 from game.agents.base_agent import BaseAgent
-from game.constants.testing import UNIT_TEST_DEFINITION
 from game.core.core_action import ActionRegistry, Goal
 from game.core.environment import Environment
 from game.core.llm import LLM
@@ -12,6 +12,7 @@ from game.core.memory import Memory
 from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import (
     TestDesignResult,
+    TestDesignTask,
     TestScenario,
     TestTarget,
 )
@@ -36,16 +37,8 @@ class TestDesignAgent(BaseAgent):
                     priority=1,
                     name="design_unit_tests",
                     description=(
-                        "Analyze a Python source file and produce a structured unit test design.\n\n"
-                        f"{UNIT_TEST_DEFINITION}\n\n"
-                        "Rules:\n"
-                        "- Identify unit-testable functions, methods, or classes\n"
-                        "- Distinguish business logic from integration boundaries\n"
-                        "- Identify dependencies that should be mocked or isolated\n"
-                        "- Propose happy path, edge case, and failure scenarios\n"
-                        "- Do not write pytest code yet\n"
-                        "- When the task is complete, you must finish by calling "
-                        "`return_test_design_result` with the final structured result"
+                        "Analyze Python source code and produce a structured, implementation-grounded "
+                        "unit test design. Finish by calling `return_test_design_result`."
                     ),
                 )
             ],
@@ -58,13 +51,15 @@ class TestDesignAgent(BaseAgent):
 
     def run_and_parse(
         self,
-        user_input: str,
+        task: TestDesignTask,
         memory: Memory | None = None,
         max_iterations: int = 20,
         action_context: ActionContext | None = None,
     ) -> TestDesignResult:
+        prompt = self._build_test_design_prompt(task)
+
         run_memory = self.run(
-            user_input=user_input,
+            user_input=prompt,
             memory=memory,
             max_iterations=max_iterations,
             action_context=action_context,
@@ -81,15 +76,19 @@ class TestDesignAgent(BaseAgent):
             except (KeyError, json.JSONDecodeError):
                 continue
 
-            if payload.get("result_type") != "test_design":
+            inner_result = payload.get("result", {})
+            if inner_result.get("result_type") != "test_design":
                 continue
 
             test_targets = []
-            for target_data in payload.get("test_targets", []):
+            for target_data in inner_result.get("test_targets", []):
                 scenarios = [
                     TestScenario(
                         name=scenario["name"],
                         description=scenario["description"],
+                        inputs=scenario.get("inputs", []),
+                        assertions=scenario.get("assertions", []),
+                        mock_targets=scenario.get("mock_targets", []),
                     )
                     for scenario in target_data.get("scenarios", [])
                 ]
@@ -106,10 +105,46 @@ class TestDesignAgent(BaseAgent):
                     )
                 )
 
-            return TestDesignResult(
-                file_path=payload["file_path"],
-                module_summary=payload["module_summary"],
-                test_targets=test_targets,
-            )
+            try:
+                return TestDesignResult(
+                    file_path=inner_result["file_path"],
+                    module_summary=inner_result["module_summary"],
+                    test_targets=test_targets,
+                )
+            except KeyError as e:
+                raise ValueError(
+                    f"TestDesignAgent result is missing required field: {e}"
+                ) from e
 
         raise ValueError("TestDesignAgent did not produce a valid test_design result.")
+
+    def _build_test_design_prompt(self, task: TestDesignTask) -> str:
+        return dedent(
+            f"""
+            You are a Python unit test design specialist.
+
+            FILE PATH
+            {task.file_path}
+
+            SOURCE CODE
+            {task.source_code}
+
+            RULES
+            - Identify only real unit-testable functions, methods, or classes visible in the source code
+            - Distinguish business logic from integration boundaries
+            - Identify real collaborators or dependencies that may need mocking
+            - Propose only scenarios grounded in the implementation
+            - Do not invent hidden behavior
+            - Do not write pytest code
+            - Prefer fewer high-confidence scenarios over many speculative ones
+            - For each scenario, provide:
+            - a clear scenario name
+            - a short description
+            - concrete inputs or setup hints as a list of strings
+            - observable assertions as a list of strings
+            - mock targets as a list of strings
+            - Assertions must reflect only behavior visible in the code
+            - Mock targets must refer only to real collaborators/dependencies visible in the code
+            - Finish by calling `return_test_design_result` with the final structured result
+            """
+        ).strip()

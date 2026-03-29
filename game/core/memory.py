@@ -51,4 +51,4 @@ class Memory:
         )
 
     def get_memories(self) -> list[dict[str, Any]]:
-        return self._memories
+        return list(self._memories)

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import types
 from typing import Any, Callable, Union, get_args, get_origin, get_type_hints
 
 
 SPECIAL_ACTION_PARAMS = {"action_context", "action_agent"}
 
 
-def _python_type_to_json_schema(annotation: Any) -> dict[str, Any]:
+def _python_type_to_json_schema(annotation: Any) -> dict[str, Any]:  # type: ignore
     """
     Convert a Python type annotation into a basic JSON schema fragment.
 
@@ -48,12 +49,12 @@ def _python_type_to_json_schema(annotation: Any) -> dict[str, Any]:
     if origin is dict:
         return {"type": "object"}
 
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         non_none_args = [arg for arg in args if arg is not type(None)]
         if len(non_none_args) == 1:
             return _python_type_to_json_schema(non_none_args[0])
 
-    return {"type": "string"}
+        return {"type": "string"}
 
 
 def _parse_docstring(docstring: str | None) -> tuple[str, dict[str, str]]:
@@ -160,18 +161,7 @@ def action(
     description: str | None = None,
     parameters: dict[str, Any] | None = None,
     terminal: bool = False,
-    tags: list[str] | None = None,
 ):
-    """
-    Decorator that attaches agent action metadata to a function.
-
-    Rules:
-    - name defaults to function.__name__
-    - description defaults to parsed function docstring description
-    - parameters default to schema inferred from function signature + type hints + Args:
-    - tags are optional
-    """
-
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         docstring = inspect.getdoc(func)
         parsed_description, _ = _parse_docstring(docstring)
@@ -188,7 +178,6 @@ def action(
                 "description": resolved_description,
                 "parameters": resolved_parameters,
                 "terminal": terminal,
-                "tags": tags or [],
             },
         )
 

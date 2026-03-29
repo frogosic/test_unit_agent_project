@@ -24,10 +24,6 @@ class AgentSystem:
     """
 
     coordinator: CoordinatorAgent
-    file_ops_agent: FileOpsAgent
-    test_design_agent: TestDesignAgent
-    test_writing_agent: TestWritingAgent
-    agent_registry: AgentRegistry
     root_action_context: ActionContext
 
 
@@ -65,17 +61,11 @@ def _configure_delegation_permissions(
     *,
     agent_registry: AgentRegistry,
     coordinator: CoordinatorAgent,
-    file_ops_agent: FileOpsAgent,
-    test_design_agent: TestDesignAgent,
-    test_writing_agent: TestWritingAgent,
+    specialists: list[FileOpsAgent | TestDesignAgent | TestWritingAgent],
 ) -> None:
     agent_registry.allow_calls(
         caller_name=coordinator.name,
-        callee_names=[
-            file_ops_agent.name,
-            test_design_agent.name,
-            test_writing_agent.name,
-        ],
+        callee_names=[agent.name for agent in specialists],
     )
 
 
@@ -145,9 +135,7 @@ def build_agent_system(
     _configure_delegation_permissions(
         agent_registry=agent_registry,
         coordinator=coordinator,
-        file_ops_agent=file_ops_agent,
-        test_design_agent=test_design_agent,
-        test_writing_agent=test_writing_agent,
+        specialists=[file_ops_agent, test_design_agent, test_writing_agent],
     )
 
     root_action_context = ActionContext(
@@ -165,9 +153,5 @@ def build_agent_system(
 
     return AgentSystem(
         coordinator=coordinator,
-        file_ops_agent=file_ops_agent,
-        test_design_agent=test_design_agent,
-        test_writing_agent=test_writing_agent,
-        agent_registry=agent_registry,
         root_action_context=root_action_context,
     )

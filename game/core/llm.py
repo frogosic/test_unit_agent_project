@@ -17,7 +17,7 @@ class LLM:
         self,
         model: str = "openai/gpt-4o-mini",
         temperature: float = 0,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
     ) -> None:
         self.model = model
         self.temperature = temperature
