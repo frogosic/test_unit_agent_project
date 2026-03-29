@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from game.actions.action_context import ActionContext
+from game.agents.base_agent import BaseAgent
 from game.core.agent_registry import AgentRegistry
 from game.agents import (
     CoordinatorAgent,
@@ -61,7 +62,7 @@ def _configure_delegation_permissions(
     *,
     agent_registry: AgentRegistry,
     coordinator: CoordinatorAgent,
-    specialists: list[FileOpsAgent | TestDesignAgent | TestWritingAgent],
+    specialists: list[BaseAgent],
 ) -> None:
     agent_registry.allow_calls(
         caller_name=coordinator.name,
@@ -117,9 +118,6 @@ def build_agent_system(
         llm=llm,
         environment=environment,
         file_security_policy=file_security_policy,
-        file_ops_agent=file_ops_agent,
-        test_design_agent=test_design_agent,
-        test_writing_agent=test_writing_agent,
     )
 
     agent_registry = AgentRegistry()

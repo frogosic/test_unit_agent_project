@@ -28,6 +28,7 @@ class FileOpsAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
+        max_iterations: int = 30,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -46,13 +47,13 @@ class FileOpsAgent(BaseAgent):
             llm=llm,
             environment=environment,
             file_security_policy=file_security_policy,
+            max_iterations=max_iterations,
         )
 
     def run_and_parse(
         self,
         target_directory: str,
         memory: Memory | None = None,
-        max_iterations: int = 20,
         action_context: ActionContext | None = None,
     ) -> FileDiscoveryResult:
         prompt = self._build_prompt(target_directory)
@@ -60,7 +61,6 @@ class FileOpsAgent(BaseAgent):
         run_memory = self.run(
             user_input=prompt,
             memory=memory,
-            max_iterations=max_iterations,
             action_context=action_context,
         )
         return self._extract_file_discovery_result(run_memory, target_directory)

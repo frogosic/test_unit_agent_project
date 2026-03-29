@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import logging
+import json
 import re
 from textwrap import dedent
 
@@ -9,6 +11,7 @@ from game.agents.base_agent import BaseAgent
 from game.core.core_action import ActionRegistry, Goal
 from game.core.environment import Environment
 from game.core.llm import LLM
+from game.core.memory import Memory
 from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import GeneratedTestFile, TestWritingTask
 from game.policies.file_security_policy import FileSecurityPolicy
@@ -26,6 +29,7 @@ class TestWritingAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
+        max_iterations: int = 10,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -33,7 +37,11 @@ class TestWritingAgent(BaseAgent):
                 Goal(
                     priority=1,
                     name="write_pytest_unit_tests",
-                    description="Generate high-quality pytest unit tests grounded in real source code and structured design.",
+                    description=(
+                        "Generate high-quality pytest unit tests grounded in real source code "
+                        "and structured test design. "
+                        "Finish by calling `return_generated_test_file` with valid Python code."
+                    ),
                 )
             ],
             agent_language=agent_language,
@@ -41,30 +49,55 @@ class TestWritingAgent(BaseAgent):
             llm=llm,
             environment=environment,
             file_security_policy=file_security_policy,
+            max_iterations=max_iterations,
         )
 
     def run_and_parse(
         self,
         task: TestWritingTask,
+        memory: Memory | None = None,
+        action_context: ActionContext | None = None,
     ) -> GeneratedTestFile:
         prompt = self._build_test_writing_prompt(task)
 
-        logger.debug("TestWritingAgent generating tests for: %s", task.source_file_path)
+        run_memory = self.run(
+            user_input=prompt,
+            memory=memory,
+            action_context=action_context,
+        )
+        return self._extract_generated_test_file(run_memory)
 
-        raw = self.llm.generate_text([{"role": "user", "content": prompt}])
-        code = _strip_markdown_fences(raw)
+    def _extract_generated_test_file(self, memory: Memory) -> GeneratedTestFile:
+        for item in reversed(memory.get_memories()):
+            if item.get("role") != "tool":
+                continue
 
-        if not code.strip():
-            raise ValueError(
-                f"TestWritingAgent produced empty output for: {task.source_file_path}"
-            )
+            try:
+                payload = json.loads(item["content"])
+            except (KeyError, json.JSONDecodeError):
+                continue
 
-        test_file_path = _derive_test_path(task.source_file_path)
+            inner_result = payload.get("result", {})
+            if inner_result.get("result_type") != "generated_test_file":
+                continue
 
-        return GeneratedTestFile(
-            source_file_path=task.source_file_path,
-            test_file_path=test_file_path,
-            pytest_code=code,
+            try:
+                pytest_code = inner_result["pytest_code"]
+                stripped = _strip_markdown_fences(pytest_code)
+                _validate_python(stripped, inner_result["source_file_path"])
+
+                return GeneratedTestFile(
+                    source_file_path=inner_result["source_file_path"],
+                    test_file_path=inner_result["test_file_path"],
+                    pytest_code=stripped,
+                )
+            except KeyError as e:
+                raise ValueError(
+                    f"TestWritingAgent result missing required field: {e}"
+                ) from e
+
+        raise ValueError(
+            "TestWritingAgent did not produce a valid generated_test_file result."
         )
 
     def _format_test_targets(self, task: TestWritingTask) -> str:
@@ -123,30 +156,32 @@ class TestWritingAgent(BaseAgent):
             - Use the scenario ASSERTIONS as the basis for test expectations
             - Use the scenario MOCK TARGETS when patching collaborators or dependencies
             - Do not invent return values, fields, exception messages, or object structures
-            - Do not invent dependencies that are not present in the source code or structured design
+            - Do not invent dependencies not present in the source code or structured design
             - No placeholder assertions
             - No markdown fences
             - Prefer a few grounded tests over many speculative tests
-            - Return only raw Python source code, no explanations, no markdown
+            - Call `return_generated_test_file` with raw Python source code when complete
             """
         ).strip()
 
 
 def _strip_markdown_fences(text: str) -> str:
-    """Remove markdown code fences from LLM output."""
     text = re.sub(r"^```(?:python)?\s*\n", "", text.strip(), flags=re.MULTILINE)
     text = re.sub(r"\n```\s*$", "", text.strip(), flags=re.MULTILINE)
     return text.strip()
 
 
-def _derive_test_path(source_file_path: str) -> str:
+def _validate_python(code: str, source_path: str) -> None:
     """
-    Derive a test file path from a source file path.
+    Validate that the generated code is syntactically valid Python.
 
-    Example:
-        game/core/llm.py -> tests/game/core/test_llm.py
+    Raises:
+        ValueError: If the code cannot be parsed.
     """
-    from pathlib import Path
-
-    source = Path(source_file_path)
-    return str(Path("tests") / source.parent / f"test_{source.name}")
+    try:
+        ast.parse(code)
+    except SyntaxError as e:
+        raise ValueError(
+            f"TestWritingAgent generated syntactically invalid Python "
+            f"for {source_path}: {e}"
+        ) from e

@@ -1,42 +1,66 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 from game.actions.action_context import ActionContext
 from game.core.memory import Memory
 from game.bootstrap.decorators import action
 
+logger = logging.getLogger(__name__)
 
-def _extract_final_output(memory: Memory) -> str:
+
+def _extract_structured_result(memory: Memory) -> dict[str, Any] | None:
     """
-    Extract the last meaningful assistant message from Memory.
+    Extract the structured result from a terminal action call in memory.
 
-    Your Memory structure:
-    - stored in self._memories
-    - accessed via get_memories()
-    - assistant messages contain:
-        {
-            "role": "assistant",
-            "content": ...
-        }
+    Walks backwards through tool result messages looking for a payload
+    with tool_executed=True and a result field. Returns the inner result
+    dict if found, None otherwise.
     """
-    memories = memory.get_memories()
+    for item in reversed(memory.get_memories()):
+        if item.get("role") != "tool":
+            continue
 
-    # Walk backwards to find last assistant message
-    for item in reversed(memories):
+        try:
+            payload = json.loads(item["content"])
+        except (KeyError, json.JSONDecodeError):
+            continue
+
+        if not payload.get("tool_executed", False):
+            continue
+
+        result = payload.get("result")
+        if result is not None:
+            return result
+
+    return None
+
+
+def _extract_text_output(memory: Memory) -> str:
+    """
+    Fallback: extract the last meaningful assistant text message.
+    Used when no structured result is found.
+    """
+    for item in reversed(memory.get_memories()):
         if item.get("role") == "assistant" and item.get("content"):
             return str(item["content"])
 
-    # fallback: return last memory item if nothing else found
-    if memories:
-        return str(memories[-1])
+    if memory.get_memories():
+        return str(memory.get_memories()[-1])
 
     return "Agent completed without producing output."
 
 
 @action(
     name="call_agent",
-    description="Delegate a task to another registered specialist agent.",
+    description=(
+        "Delegate a task to a registered specialist agent and receive its structured result. "
+        "Use file_ops_agent to discover and read Python source files. "
+        "Use test_design_agent to analyze a source file and produce a structured test design. "
+        "Use test_writing_agent to generate pytest code from a structured test design."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -54,7 +78,11 @@ def _extract_final_output(memory: Memory) -> str:
             },
             "task": {
                 "type": "string",
-                "description": "The task to delegate to the target agent.",
+                "description": (
+                    "A clear, self-contained description of the task to delegate. "
+                    "Include all context the agent needs — file paths, source code, "
+                    "or structured designs — since the agent has no prior memory."
+                ),
             },
         },
         "required": ["agent_name", "task"],
@@ -67,19 +95,6 @@ def call_agent(
     agent_name: str,
     task: str,
 ) -> dict[str, Any]:
-    """
-    Delegate a task to another registered agent.
-
-    Flow:
-    - resolve caller from ActionContext
-    - resolve registry from ActionContext
-    - check delegation permission
-    - enforce delegation safety rules
-    - create isolated memory for the invoked agent
-    - create child ActionContext for the target agent
-    - run the target agent
-    - return a structured summary of the result
-    """
     registry = action_context.require_agent_registry()
     caller_name = action_context.require_current_agent_name()
 
@@ -115,8 +130,7 @@ def call_agent(
             "task": task,
             "error": (
                 "Delegation denied: recursion or delegation loop detected. "
-                f"Agent '{target_agent.name}' already exists in delegation path "
-                f"{delegation_path}."
+                f"Agent '{target_agent.name}' already in delegation path {delegation_path}."
             ),
         }
 
@@ -127,21 +141,43 @@ def call_agent(
         "visited_agents": sorted(visited_agents),
     }
 
-    invoked_memory = Memory()
     child_context = action_context.spawn_delegated_child(
         next_agent_name=target_agent.name,
         relevant_memory=relevant_memory,
     )
 
+    logger.info(
+        "Delegating to %s (depth=%d): %s",
+        target_agent.name,
+        child_context.get_delegation_depth(),
+        task[:120],
+    )
+
     try:
         result_memory = target_agent.run_callable(
             user_input=task,
-            memory=invoked_memory,
+            memory=Memory(),
             action_context=child_context,
         )
 
-        final_output = _extract_final_output(result_memory)
+        structured_result = _extract_structured_result(result_memory)
 
+        if structured_result is not None:
+            logger.info("Structured result received from %s", target_agent.name)
+            return {
+                "tool_executed": True,
+                "success": True,
+                "caller_agent": caller_name,
+                "called_agent": target_agent.name,
+                "task": task,
+                "delegation_depth": child_context.get_delegation_depth(),
+                "delegation_path": child_context.get_delegation_path(),
+                "result": structured_result,
+            }
+
+        # fallback for agents that respond with text rather than structured results
+        text_output = _extract_text_output(result_memory)
+        logger.info("Text output received from %s", target_agent.name)
         return {
             "tool_executed": True,
             "success": True,
@@ -150,11 +186,11 @@ def call_agent(
             "task": task,
             "delegation_depth": child_context.get_delegation_depth(),
             "delegation_path": child_context.get_delegation_path(),
-            "relevant_memory": child_context.get_relevant_memory(),
-            "final_output": final_output,
+            "result": text_output,
         }
 
     except Exception as exc:
+        logger.exception("Delegation to %s failed", target_agent.name)
         return {
             "tool_executed": False,
             "success": False,
@@ -163,6 +199,5 @@ def call_agent(
             "task": task,
             "delegation_depth": child_context.get_delegation_depth(),
             "delegation_path": child_context.get_delegation_path(),
-            "relevant_memory": child_context.get_relevant_memory(),
             "error": str(exc),
         }

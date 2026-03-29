@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from enum import Enum, auto
 
 
 from game.actions.action_context import ActionContext
@@ -16,6 +17,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class StopReason(Enum):
+    TERMINAL_ACTION = auto()
+    TOOL_ERROR = auto()
+
+
 class BaseAgent:
     def __init__(
         self,
@@ -26,6 +32,7 @@ class BaseAgent:
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
+        max_iterations: int = 20,
     ) -> None:
         self.name = name
         self.goals = goals
@@ -34,6 +41,7 @@ class BaseAgent:
         self.llm = llm
         self.environment = environment
         self.file_security_policy = file_security_policy
+        self.max_iterations = max_iterations
 
     def _call_llm(self, full_prompt: list[dict[str, Any]]) -> Any:
         """Call the LLM with the given prompt and tools."""
@@ -65,8 +73,7 @@ class BaseAgent:
         memory: Memory,
         tool_calls: list[dict[str, Any]],
         action_context: ActionContext,
-    ) -> bool:
-        """Execute the given tool calls and update memory with the results."""
+    ) -> StopReason | None:
         for tool_call in tool_calls:
             action = self.action_registry.get_action(tool_call["name"])
 
@@ -78,7 +85,7 @@ class BaseAgent:
                         "error": f"Unknown action requested: {tool_call['name']}",
                     },
                 )
-                return True
+                return StopReason.TOOL_ERROR
 
             logger.debug(
                 "Executing action: %s with args: %s",
@@ -91,7 +98,7 @@ class BaseAgent:
                 action_args=tool_call["args"],
                 action_context=action_context,
             )
-            logger.debug("Action Result: %s", result)
+            logger.debug("Action result: %s", result)
 
             memory.add_tool_result(tool_call["id"], result)
 
@@ -102,12 +109,12 @@ class BaseAgent:
                         "content": f"Stopped due to tool error: {result['error']}",
                     }
                 )
-                return True
+                return StopReason.TOOL_ERROR
 
             if action.terminal:
-                return True
+                return StopReason.TERMINAL_ACTION
 
-        return False
+        return None
 
     def _think(self, memory: Memory) -> list[dict[str, Any]]:
         prompt = self.agent_language.construct_prompt(
@@ -131,25 +138,29 @@ class BaseAgent:
         self,
         user_input: str,
         memory: Memory | None = None,
-        max_iterations: int = 20,
         action_context: ActionContext | None = None,
     ) -> Memory:
         memory = memory or Memory()
         execution_context = self._build_execution_context(action_context)
-
         memory.add_user_message(user_input)
 
-        for _ in range(max_iterations):
+        for _ in range(self.max_iterations):
             tool_calls = self._think(memory)
 
             if not tool_calls:
                 break
 
-            if self._execute_tool_calls(
+            stop_reason = self._execute_tool_calls(
                 memory=memory,
                 tool_calls=tool_calls,
                 action_context=execution_context,
-            ):
+            )
+            if stop_reason is not None:
+                logger.debug(
+                    "Agent %s stopping — reason: %s",
+                    self.name,
+                    stop_reason.name,
+                )
                 break
 
         return memory

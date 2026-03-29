@@ -57,9 +57,8 @@ def main() -> None:
     )
 
     logger.info(
-        "Generation complete — files: %d, designs: %d, tests: %d",
+        "Generation complete — files: %d, tests: %d",
         len(result.discovered_files),
-        len(result.test_designs),
         len(result.generated_tests),
     )
     logger.info("Summary: %s", result.summary)

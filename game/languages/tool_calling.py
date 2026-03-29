@@ -11,10 +11,7 @@ Prompt = list[dict[str, Any]]
 
 class AgentLanguage(Protocol):
     def construct_prompt(
-        self,
-        actions: list[Action],
-        goals: list[Goal],
-        memory: Memory,
+        self, actions: list[Action], goals: list[Goal], memory: Memory
     ) -> Prompt: ...
 
     def get_message(self, response: Any) -> Any: ...
@@ -24,27 +21,11 @@ class AgentLanguage(Protocol):
 
 class ToolCallingAgentLanguage:
     def construct_prompt(
-        self,
-        actions: list[Action],
-        goals: list[Goal],
-        memory: Memory,
+        self, actions: list[Action], goals: list[Goal], memory: Memory
     ) -> Prompt:
-        """Construct a system prompt for tool-calling agents."""
         goal_text = "\n".join(
             f"- [{goal.priority}] {goal.name}: {goal.description}"
             for goal in sorted(goals, key=lambda goal: goal.priority)
-        )
-
-        action_text = json.dumps(
-            {
-                action.name: {
-                    "description": action.description,
-                    "parameters": action.parameters,
-                    "terminal": action.terminal,
-                }
-                for action in actions
-            },
-            indent=2,
         )
 
         terminal_actions = [action.name for action in actions if action.terminal]
@@ -57,9 +38,6 @@ You are an AI agent operating under the GAME framework.
 
 Goals:
 {goal_text}
-
-Available actions:
-{action_text}
 
 Terminal actions available:
 {terminal_action_text}
@@ -85,37 +63,27 @@ Rules:
         return prompt
 
     def get_message(self, response: Any) -> Any:
-        """Extract the message from the LLM response."""
         return response.choices[0].message
 
     def get_tool_calls(self, message: Any) -> list[dict[str, Any]]:
-        """Extract tool calls from the LLM message."""
         raw_tool_calls = getattr(message, "tool_calls", None) or []
-
-        parsed_tool_calls: list[dict[str, Any]] = []
-        for tool_call in raw_tool_calls:
-            parsed_tool_calls.append(
-                {
-                    "id": tool_call.id,
-                    "name": tool_call.function.name,
-                    "args": self._parse_tool_arguments(tool_call.function.arguments),
-                }
-            )
-
-        return parsed_tool_calls
+        return [
+            {
+                "id": tool_call.id,
+                "name": tool_call.function.name,
+                "args": self._parse_tool_arguments(tool_call.function.arguments),
+            }
+            for tool_call in raw_tool_calls
+        ]
 
     def _parse_tool_arguments(self, raw_args: Any) -> dict[str, Any]:
-        """Parse raw tool arguments into a dictionary."""
         if raw_args is None or raw_args == "":
             return {}
-
         if isinstance(raw_args, dict):
             return raw_args
-
         if isinstance(raw_args, str):
             try:
                 return json.loads(raw_args)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid tool arguments JSON: {raw_args}") from exc
-
         raise ValueError(f"Unsupported tool argument type: {type(raw_args).__name__}")

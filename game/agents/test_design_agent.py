@@ -29,6 +29,7 @@ class TestDesignAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
+        max_iterations: int = 10,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -47,13 +48,13 @@ class TestDesignAgent(BaseAgent):
             llm=llm,
             environment=environment,
             file_security_policy=file_security_policy,
+            max_iterations=max_iterations,
         )
 
     def run_and_parse(
         self,
         task: TestDesignTask,
         memory: Memory | None = None,
-        max_iterations: int = 20,
         action_context: ActionContext | None = None,
     ) -> TestDesignResult:
         prompt = self._build_test_design_prompt(task)
@@ -61,7 +62,6 @@ class TestDesignAgent(BaseAgent):
         run_memory = self.run(
             user_input=prompt,
             memory=memory,
-            max_iterations=max_iterations,
             action_context=action_context,
         )
         return self._extract_test_design_result(run_memory)

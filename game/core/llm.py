@@ -17,7 +17,7 @@ class LLM:
         self,
         model: str = "openai/gpt-4o-mini",
         temperature: float = 0,
-        max_tokens: int = 4096,
+        max_tokens: int = 2048,
     ) -> None:
         self.model = model
         self.temperature = temperature
@@ -27,13 +27,13 @@ class LLM:
         self,
         prompt: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> Any:
-        """Generate an LLM response, optionally with tool-calling enabled."""
         request_kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": prompt,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
         }
 
         if tools:
@@ -42,9 +42,12 @@ class LLM:
 
         return completion(**request_kwargs)
 
-    def generate_text(self, prompt: list[dict[str, Any]]) -> str:
-        """Generate a plain text response without using tools."""
-        response = self.generate(prompt=prompt)
+    def generate_text(
+        self,
+        prompt: list[dict[str, Any]],
+        max_tokens: int | None = None,
+    ) -> str:
+        response = self.generate(prompt=prompt, max_tokens=max_tokens)
         return response.choices[0].message.content or ""
 
 
