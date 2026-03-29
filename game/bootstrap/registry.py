@@ -5,21 +5,28 @@ from collections.abc import Iterable
 from game.core.core_action import Action, ActionRegistry
 
 
-def build_action_registry(functions: Iterable) -> ActionRegistry:
+def build_action_registry(items: Iterable) -> ActionRegistry:
     """
-    Build an ActionRegistry from decorated functions.
+    Build an ActionRegistry from a mixture of:
+    - decorated functions carrying _action_meta
+    - prebuilt Action objects
     """
     registry = ActionRegistry()
 
-    for func in functions:
-        meta = getattr(func, "_action_meta", None)
+    for item in items:
+        if isinstance(item, Action):
+            registry.register(item)
+            continue
+
+        meta = getattr(item, "_action_meta", None)
         if not meta:
-            raise ValueError(f"{func.__name__} is missing @action decorator")
+            item_name = getattr(item, "__name__", repr(item))
+            raise ValueError(f"{item_name} is missing @action decorator")
 
         registry.register(
             Action(
                 name=meta["name"],
-                function=func,
+                function=item,
                 description=meta["description"],
                 parameters=meta["parameters"],
                 terminal=meta["terminal"],

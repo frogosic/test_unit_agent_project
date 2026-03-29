@@ -48,40 +48,6 @@ def return_generated_test_file(
     }
 
 
-RETURN_FILE_DISCOVERY_RESULT_ACTION = Action(
-    name="return_file_discovery_result",
-    function=return_file_discovery_result,
-    description=(
-        "Return the final structured file discovery result for the current task. "
-        "Use this only when file discovery is complete."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "target_directory": {
-                "type": "string",
-                "description": "The directory that was inspected.",
-            },
-            "files": {
-                "type": "array",
-                "description": "The discovered source files.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "content": {"type": "string"},
-                        "file_type": {"type": "string"},
-                    },
-                    "required": ["path", "content"],
-                },
-            },
-        },
-        "required": ["target_directory", "files"],
-    },
-    terminal=True,
-)
-
-
 RETURN_TEST_DESIGN_RESULT_ACTION = Action(
     name="return_test_design_result",
     function=return_test_design_result,

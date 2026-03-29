@@ -7,8 +7,8 @@ from game.core.agent_registry import AgentRegistry
 from game.agents import (
     CoordinatorAgent,
     FileOpsAgent,
-    ReportingAgent,
     TestDesignAgent,
+    TestWritingAgent,
 )
 from game.core.core_action import ActionRegistry
 from game.core.environment import Environment
@@ -26,7 +26,7 @@ class AgentSystem:
     coordinator: CoordinatorAgent
     file_ops_agent: FileOpsAgent
     test_design_agent: TestDesignAgent
-    reporting_agent: ReportingAgent
+    test_writing_agent: TestWritingAgent
     agent_registry: AgentRegistry
     root_action_context: ActionContext
 
@@ -37,7 +37,7 @@ def _register_agents(
     coordinator: CoordinatorAgent,
     file_ops_agent: FileOpsAgent,
     test_design_agent: TestDesignAgent,
-    reporting_agent: ReportingAgent,
+    test_writing_agent: TestWritingAgent,
 ) -> None:
     agent_registry.register_agent(
         name=coordinator.name,
@@ -52,12 +52,12 @@ def _register_agents(
     agent_registry.register_agent(
         name=test_design_agent.name,
         run_callable=test_design_agent.run,
-        description="Specialist agent for test suite design.",
+        description="Specialist agent for unit test design.",
     )
     agent_registry.register_agent(
-        name=reporting_agent.name,
-        run_callable=reporting_agent.run,
-        description="Specialist agent for reports and documentation.",
+        name=test_writing_agent.name,
+        run_callable=test_writing_agent.run,
+        description="Specialist agent for pytest unit test generation.",
     )
 
 
@@ -67,14 +67,14 @@ def _configure_delegation_permissions(
     coordinator: CoordinatorAgent,
     file_ops_agent: FileOpsAgent,
     test_design_agent: TestDesignAgent,
-    reporting_agent: ReportingAgent,
+    test_writing_agent: TestWritingAgent,
 ) -> None:
     agent_registry.allow_calls(
         caller_name=coordinator.name,
         callee_names=[
             file_ops_agent.name,
             test_design_agent.name,
-            reporting_agent.name,
+            test_writing_agent.name,
         ],
     )
 
@@ -88,7 +88,7 @@ def build_agent_system(
     coordinator_action_registry: ActionRegistry,
     file_ops_action_registry: ActionRegistry,
     test_design_action_registry: ActionRegistry,
-    reporting_action_registry: ActionRegistry,
+    test_writing_action_registry: ActionRegistry,
 ) -> AgentSystem:
     """
     Assemble the full multi-agent system.
@@ -97,14 +97,6 @@ def build_agent_system(
     That keeps this bootstrap module compatible with the project's real action
     registration mechanism.
     """
-    coordinator = CoordinatorAgent(
-        agent_language=agent_language,
-        action_registry=coordinator_action_registry,
-        llm=llm,
-        environment=environment,
-        file_security_policy=file_security_policy,
-    )
-
     file_ops_agent = FileOpsAgent(
         agent_language=agent_language,
         action_registry=file_ops_action_registry,
@@ -121,12 +113,23 @@ def build_agent_system(
         file_security_policy=file_security_policy,
     )
 
-    reporting_agent = ReportingAgent(
+    test_writing_agent = TestWritingAgent(
         agent_language=agent_language,
-        action_registry=reporting_action_registry,
+        action_registry=test_writing_action_registry,
         llm=llm,
         environment=environment,
         file_security_policy=file_security_policy,
+    )
+
+    coordinator = CoordinatorAgent(
+        agent_language=agent_language,
+        action_registry=coordinator_action_registry,
+        llm=llm,
+        environment=environment,
+        file_security_policy=file_security_policy,
+        file_ops_agent=file_ops_agent,
+        test_design_agent=test_design_agent,
+        test_writing_agent=test_writing_agent,
     )
 
     agent_registry = AgentRegistry()
@@ -136,7 +139,7 @@ def build_agent_system(
         coordinator=coordinator,
         file_ops_agent=file_ops_agent,
         test_design_agent=test_design_agent,
-        reporting_agent=reporting_agent,
+        test_writing_agent=test_writing_agent,
     )
 
     _configure_delegation_permissions(
@@ -144,7 +147,7 @@ def build_agent_system(
         coordinator=coordinator,
         file_ops_agent=file_ops_agent,
         test_design_agent=test_design_agent,
-        reporting_agent=reporting_agent,
+        test_writing_agent=test_writing_agent,
     )
 
     root_action_context = ActionContext(
@@ -164,7 +167,7 @@ def build_agent_system(
         coordinator=coordinator,
         file_ops_agent=file_ops_agent,
         test_design_agent=test_design_agent,
-        reporting_agent=reporting_agent,
+        test_writing_agent=test_writing_agent,
         agent_registry=agent_registry,
         root_action_context=root_action_context,
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from game.actions.action_context import ActionContext
 from game.agents.base_agent import BaseAgent
@@ -14,11 +15,6 @@ from game.policies.file_security_policy import FileSecurityPolicy
 
 
 class FileOpsAgent(BaseAgent):
-    """
-    Specialist agent responsible for safe file discovery and file reading
-    within the allowed project scope.
-    """
-
     AGENT_NAME = "file_ops_agent"
 
     def __init__(
@@ -36,16 +32,15 @@ class FileOpsAgent(BaseAgent):
                     priority=1,
                     name="inspect_source_files",
                     description=(
-                        "Inspect a requested directory, identify relevant Python source files, "
+                        "Inspect a requested file or directory, identify relevant Python source files, "
                         "and read only the files needed to support downstream analysis.\n\n"
                         "Rules:\n"
-                        "- Focus on Python source files relevant to the task\n"
-                        "- Avoid irrelevant files such as caches, virtual environments, and test files unless explicitly needed\n"
+                        "- If the user provides a specific Python file path, focus on that file only\n"
+                        "- Avoid irrelevant files such as __init__.py, caches, virtual environments, and test files unless explicitly needed\n"
                         "- Prefer targeted inspection over broad exploration\n"
                         "- Ground conclusions in actual file contents, not filenames alone\n"
                         "- Stay within the allowed file-access policy\n"
-                        "- When the task is complete, you must finish by calling "
-                        "`return_file_discovery_result` with the final structured result"
+                        "- When enough relevant files have been read, stop"
                     ),
                 )
             ],
@@ -72,30 +67,90 @@ class FileOpsAgent(BaseAgent):
         return self._extract_file_discovery_result(run_memory)
 
     def _extract_file_discovery_result(self, memory: Memory) -> FileDiscoveryResult:
-        for item in reversed(memory.get_memories()):
-            if item.get("role") != "tool":
+        memories = memory.get_memories()
+
+        requested_path: str | None = None
+        read_results_by_tool_id: dict[str, str] = {}
+        tool_name_by_id: dict[str, str] = {}
+        tool_args_by_id: dict[str, dict] = {}
+
+        for item in memories:
+            if item.get("role") == "user" and requested_path is None:
+                requested_path = self._extract_requested_path(item.get("content", ""))
+
+            if item.get("role") == "assistant":
+                for tool_call in item.get("tool_calls", []):
+                    tool_id = tool_call["id"]
+                    tool_name = tool_call["function"]["name"]
+                    raw_args = tool_call["function"]["arguments"]
+
+                    try:
+                        parsed_args = (
+                            json.loads(raw_args)
+                            if isinstance(raw_args, str)
+                            else raw_args
+                        )
+                    except json.JSONDecodeError:
+                        parsed_args = {}
+
+                    tool_name_by_id[tool_id] = tool_name
+                    tool_args_by_id[tool_id] = parsed_args or {}
+
+            elif item.get("role") == "tool":
+                tool_id = item.get("tool_call_id")
+                if not tool_id:
+                    continue
+
+                try:
+                    payload = json.loads(item["content"])
+                except (KeyError, json.JSONDecodeError):
+                    continue
+
+                if not payload.get("tool_executed", False):
+                    continue
+
+                if tool_name_by_id.get(tool_id) == "read_file":
+                    result = payload.get("result", "")
+                    if isinstance(result, str):
+                        read_results_by_tool_id[tool_id] = result
+
+        files: list[SourceFile] = []
+
+        for tool_id, content in read_results_by_tool_id.items():
+            args = tool_args_by_id.get(tool_id, {})
+            file_name = args.get("file_name")
+            if not file_name:
                 continue
 
-            try:
-                payload = json.loads(item["content"])
-            except (KeyError, json.JSONDecodeError):
+            if not file_name.endswith(".py"):
                 continue
 
-            if payload.get("result_type") != "file_discovery":
+            if Path(file_name).name == "__init__.py":
                 continue
 
-            files = [
+            files.append(
                 SourceFile(
-                    path=file_data["path"],
-                    content=file_data["content"],
-                    file_type=file_data.get("file_type", "python"),
+                    path=file_name,
+                    content=content,
+                    file_type="python",
                 )
-                for file_data in payload.get("files", [])
-            ]
-
-            return FileDiscoveryResult(
-                target_directory=payload["target_directory"],
-                files=files,
             )
 
-        raise ValueError("FileOpsAgent did not produce a valid file_discovery result.")
+        if not files:
+            raise ValueError(
+                "FileOpsAgent did not produce any readable Python source files."
+            )
+
+        target_directory = requested_path or str(Path(files[0].path).parent)
+        return FileDiscoveryResult(
+            target_directory=target_directory,
+            files=files,
+        )
+
+    def _extract_requested_path(self, user_input: str) -> str | None:
+        marker = "'"
+        if marker in user_input:
+            parts = user_input.split(marker)
+            if len(parts) >= 2:
+                return parts[1].strip()
+        return None

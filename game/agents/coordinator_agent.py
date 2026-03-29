@@ -87,9 +87,10 @@ class CoordinatorAgent(BaseAgent):
 
         discovery_result = self.file_ops_agent.run_and_parse(
             user_input=(
-                f"Inspect the directory '{target_directory}', identify relevant Python "
-                "source files for unit test generation, read their contents, and return "
-                "the final structured file discovery result."
+                f"Inspect the target path '{target_directory}'. "
+                "If it is a specific Python file, read only that file. "
+                "If it is a directory, identify relevant Python source files for unit test generation "
+                "and read only the necessary files."
             ),
             action_context=execution_context,
         )

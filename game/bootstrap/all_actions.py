@@ -13,7 +13,6 @@ from game.actions.file_actions import (
 )
 from game.actions.test_actions import write_pytest_file
 from game.actions.result_actions import (
-    RETURN_FILE_DISCOVERY_RESULT_ACTION,
     RETURN_TEST_DESIGN_RESULT_ACTION,
     RETURN_GENERATED_TEST_FILE_ACTION,
 )
@@ -42,7 +41,6 @@ def build_file_ops_action_registry() -> ActionRegistry:
             list_directories,
             list_files,
             read_file,
-            RETURN_FILE_DISCOVERY_RESULT_ACTION,
         ]
     )
 
