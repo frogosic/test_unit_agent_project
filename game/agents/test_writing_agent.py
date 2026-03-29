@@ -15,6 +15,7 @@ from game.core.memory import Memory
 from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import GeneratedTestFile, TestWritingTask
 from game.policies.file_security_policy import FileSecurityPolicy
+from game.services.pytest_runner import validate_generated_test
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class TestWritingAgent(BaseAgent):
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
         max_iterations: int = 10,
+        max_retries: int = 3,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -38,9 +40,10 @@ class TestWritingAgent(BaseAgent):
                     priority=1,
                     name="write_pytest_unit_tests",
                     description=(
-                        "Generate high-quality pytest unit tests grounded in real source code "
-                        "and structured test design. "
-                        "Finish by calling `return_generated_test_file` with valid Python code."
+                        "Generate pytest unit tests from the provided source code and test design. "
+                        "You MUST finish by calling `return_generated_test_file` with the generated code. "
+                        "Do NOT respond with text. Do NOT explain your work. "
+                        "Call `return_generated_test_file` as your only and final action."
                     ),
                 )
             ],
@@ -50,22 +53,21 @@ class TestWritingAgent(BaseAgent):
             environment=environment,
             file_security_policy=file_security_policy,
             max_iterations=max_iterations,
+            max_retries=max_retries,
         )
 
     def run_and_parse(
         self,
         task: TestWritingTask,
-        memory: Memory | None = None,
         action_context: ActionContext | None = None,
     ) -> GeneratedTestFile:
         prompt = self._build_test_writing_prompt(task)
-
-        run_memory = self.run(
+        return self._run_with_retry(
             user_input=prompt,
-            memory=memory,
+            extract=self._extract_generated_test_file,
+            validate=validate_generated_test,
             action_context=action_context,
         )
-        return self._extract_generated_test_file(run_memory)
 
     def _extract_generated_test_file(self, memory: Memory) -> GeneratedTestFile:
         for item in reversed(memory.get_memories()):

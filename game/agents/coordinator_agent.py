@@ -39,7 +39,7 @@ class CoordinatorAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
-        max_iterations: int = 50,
+        max_iterations: int = 80,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -48,29 +48,33 @@ class CoordinatorAgent(BaseAgent):
                     priority=1,
                     name="coordinate_unit_test_generation",
                     description=(
-                        "Coordinate end-to-end pytest unit test generation for a target directory.\n\n"
+                        "Coordinate end-to-end pytest unit test generation for a target path.\n\n"
                         "WORKFLOW — follow this exact sequence:\n\n"
                         "1. DISCOVER FILES\n"
-                        "   Call file_ops_agent with the target directory.\n"
-                        "   The result contains a list of source files with their paths and content.\n\n"
-                        "2. FOR EACH SOURCE FILE — repeat steps 2a and 2b:\n\n"
+                        "   Call file_ops_agent with the target path.\n"
+                        "   The result contains a list of source files, each with 'path' and 'content'.\n\n"
+                        "2. FOR EACH SOURCE FILE — repeat steps 2a and 2b for every file:\n\n"
                         "   2a. DESIGN TESTS\n"
                         "       Call test_design_agent.\n"
-                        "       Include the full file_path and source_code in the task.\n"
-                        "       The result contains a structured test design.\n\n"
+                        "       The task MUST include:\n"
+                        "       - FILE PATH: the exact file path\n"
+                        "       - SOURCE CODE: the complete source code content from the discovery result\n\n"
                         "   2b. GENERATE TESTS\n"
                         "       Call test_writing_agent.\n"
-                        "       Include the full file_path, source_code, module_summary, "
-                        "and all test_targets from the design result in the task.\n"
-                        "       The result contains the generated pytest code.\n\n"
+                        "       The task MUST include:\n"
+                        "       - FILE PATH: the exact file path\n"
+                        "       - SOURCE CODE: the complete source code content\n"
+                        "       - MODULE SUMMARY: from the test design result\n"
+                        "       - TEST TARGETS: the full test_targets list from the test design result\n\n"
                         "3. FINALIZE\n"
-                        "   Once ALL files have been processed, call return_unit_test_generation_result\n"
-                        "   with the complete list of generated test results and a short summary.\n\n"
+                        "   Once ALL files are processed, call return_unit_test_generation_result\n"
+                        "   with every generated test result and a short summary.\n\n"
                         "RULES\n"
+                        "- Always include full source code in tasks — agents have no memory of prior calls\n"
                         "- Process every discovered file — do not skip any\n"
-                        "- Each task string must be fully self-contained\n"
                         "- Do not call return_unit_test_generation_result until all files are done\n"
-                        "- Do not call terminate — use return_unit_test_generation_result to finish"
+                        "- Do not call terminate — use return_unit_test_generation_result to finish\n"
+                        "- If the target path is a single file, process only that file"
                     ),
                 )
             ],
@@ -95,8 +99,9 @@ class CoordinatorAgent(BaseAgent):
 
         run_memory = self.run(
             user_input=(
-                f"Generate pytest unit tests for all Python source files "
-                f"in the following directory: {target_directory}"
+                f"Generate pytest unit tests for the following target path: {target_directory}\n\n"
+                f"If it is a single Python file, process only that file.\n"
+                f"If it is a directory, process all relevant Python source files found."
             ),
             action_context=action_context,
         )

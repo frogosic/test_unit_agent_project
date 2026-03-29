@@ -115,9 +115,10 @@ def return_test_design_result(
 
 def return_generated_test_file(
     source_file_path: str,
-    test_file_path: str,
     pytest_code: str,
 ) -> dict[str, Any]:
+    test_file_path = _derive_test_path(source_file_path)
+
     return {
         "tool_executed": True,
         "success": True,
@@ -126,6 +127,19 @@ def return_generated_test_file(
         "test_file_path": test_file_path,
         "pytest_code": pytest_code,
     }
+
+
+def _derive_test_path(source_file_path: str) -> str:
+    """
+    Derive a canonical test file path from a source file path.
+
+    Example:
+        game/core/memory.py -> tests/game/core/test_memory.py
+    """
+    from pathlib import Path
+
+    source = Path(source_file_path)
+    return str(Path("tests") / source.parent / f"test_{source.name}")
 
 
 RETURN_TEST_DESIGN_RESULT_ACTION = Action(
@@ -206,8 +220,11 @@ RETURN_GENERATED_TEST_FILE_ACTION = Action(
     name="return_generated_test_file",
     function=return_generated_test_file,
     description=(
-        "Return the final generated pytest unit test file content. "
-        "Use this only when test generation is complete."
+        "Return the final generated pytest unit test file. "
+        "Call this with source_file_path and pytest_code ONLY. "
+        "Do NOT include test_file_path — it is derived automatically. "
+        "This is the ONLY valid way to complete the task. "
+        "Do not return text — call this action."
     ),
     parameters={
         "type": "object",
@@ -216,16 +233,13 @@ RETURN_GENERATED_TEST_FILE_ACTION = Action(
                 "type": "string",
                 "description": "The original source file path.",
             },
-            "test_file_path": {
-                "type": "string",
-                "description": "The destination path for the generated test file.",
-            },
             "pytest_code": {
                 "type": "string",
-                "description": "The generated pytest code.",
+                "description": "The generated pytest code. Raw Python only, no markdown.",
             },
         },
-        "required": ["source_file_path", "test_file_path", "pytest_code"],
+        "required": ["source_file_path", "pytest_code"],
+        "additionalProperties": False,
     },
     terminal=True,
 )

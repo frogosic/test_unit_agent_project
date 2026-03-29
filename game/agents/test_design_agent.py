@@ -30,6 +30,7 @@ class TestDesignAgent(BaseAgent):
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
         max_iterations: int = 10,
+        max_retries: int = 3,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -49,22 +50,20 @@ class TestDesignAgent(BaseAgent):
             environment=environment,
             file_security_policy=file_security_policy,
             max_iterations=max_iterations,
+            max_retries=max_retries,
         )
 
     def run_and_parse(
         self,
         task: TestDesignTask,
-        memory: Memory | None = None,
         action_context: ActionContext | None = None,
     ) -> TestDesignResult:
         prompt = self._build_test_design_prompt(task)
-
-        run_memory = self.run(
+        return self._run_with_retry(
             user_input=prompt,
-            memory=memory,
+            extract=self._extract_test_design_result,
             action_context=action_context,
         )
-        return self._extract_test_design_result(run_memory)
 
     def _extract_test_design_result(self, memory: Memory) -> TestDesignResult:
         for item in reversed(memory.get_memories()):

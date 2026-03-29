@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-from enum import Enum, auto
+from typing import Any, Callable, TypeVar
 
+from enum import Enum, auto
 
 from game.actions.action_context import ActionContext
 from game.core.core_action import ActionRegistry, Goal
@@ -15,6 +15,7 @@ from game.policies.file_security_policy import FileSecurityPolicy
 import logging
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class StopReason(Enum):
@@ -33,6 +34,7 @@ class BaseAgent:
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
         max_iterations: int = 20,
+        max_retries: int = 3,
     ) -> None:
         self.name = name
         self.goals = goals
@@ -42,6 +44,7 @@ class BaseAgent:
         self.environment = environment
         self.file_security_policy = file_security_policy
         self.max_iterations = max_iterations
+        self.max_retries = max_retries
 
     def _call_llm(self, full_prompt: list[dict[str, Any]]) -> Any:
         """Call the LLM with the given prompt and tools."""
@@ -133,6 +136,62 @@ class BaseAgent:
         logger.debug("Tool calls: %s", tool_calls)
 
         return tool_calls
+
+    def _run_with_retry(
+        self,
+        user_input: str,
+        extract: Callable[[Memory], T],
+        validate: Callable[[T], str | None] | None = None,
+        action_context: ActionContext | None = None,
+    ) -> T:
+        last_error: Exception | None = None
+        last_validation_error: str | None = None
+
+        for attempt in range(self.max_retries):
+            current_input = user_input
+
+            if attempt > 0:
+                error_context = str(last_error) if last_error else last_validation_error
+                logger.warning(
+                    "Agent %s retrying (attempt %d/%d) after: %s",
+                    self.name,
+                    attempt + 1,
+                    self.max_retries,
+                    error_context,
+                )
+                current_input = (
+                    f"{user_input}\n\n"
+                    f"RETRY NOTICE\n"
+                    f"Your previous attempt failed with the following error:\n"
+                    f"{error_context}\n"
+                    f"Please address this issue and try again."
+                )
+
+            try:
+                memory = self.run(
+                    user_input=current_input,
+                    action_context=action_context,
+                )
+                result = extract(memory)
+            except ValueError as e:
+                last_error = e
+                last_validation_error = None
+                continue
+
+            if validate is not None:
+                validation_error = validate(result)
+                if validation_error is not None:
+                    last_error = None
+                    last_validation_error = validation_error
+                    continue
+
+            return result
+
+        error_context = str(last_error) if last_error else last_validation_error
+        raise RuntimeError(
+            f"Agent {self.name} failed after {self.max_retries} attempts. "
+            f"Last error: {error_context}"
+        ) from last_error
 
     def run(
         self,

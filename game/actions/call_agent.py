@@ -175,18 +175,25 @@ def call_agent(
                 "result": structured_result,
             }
 
-        # fallback for agents that respond with text rather than structured results
         text_output = _extract_text_output(result_memory)
-        logger.info("Text output received from %s", target_agent.name)
+        logger.warning(
+            "Agent %s returned text instead of structured result — treating as failure",
+            target_agent.name,
+            text_output[:500],
+        )
+
         return {
             "tool_executed": True,
-            "success": True,
+            "success": False,
             "caller_agent": caller_name,
             "called_agent": target_agent.name,
             "task": task,
             "delegation_depth": child_context.get_delegation_depth(),
             "delegation_path": child_context.get_delegation_path(),
-            "result": text_output,
+            "error": (
+                f"Agent '{target_agent.name}' returned text instead of calling "
+                f"its required terminal action. Output: {text_output[:200]}"
+            ),
         }
 
     except Exception as exc:

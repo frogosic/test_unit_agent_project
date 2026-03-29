@@ -1,3 +1,5 @@
 .venv
 .env
 __pycache__/
+unit_test_generation_result.json
+debug
