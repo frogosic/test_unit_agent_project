@@ -16,6 +16,7 @@ from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import GeneratedTestFile, TestWritingTask
 from game.policies.file_security_policy import FileSecurityPolicy
 from game.services.pytest_runner import validate_generated_test
+from game.services.code_fixups import _fix_mock_name_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class TestWritingAgent(BaseAgent):
             user_input=prompt,
             extract=self._extract_generated_test_file,
             validate=validate_generated_test,
+            transform=self._transform_generated_test_file,
             action_context=action_context,
         )
 
@@ -100,6 +102,15 @@ class TestWritingAgent(BaseAgent):
 
         raise ValueError(
             "TestWritingAgent did not produce a valid generated_test_file result."
+        )
+
+    def _transform_generated_test_file(
+        self, generated: GeneratedTestFile
+    ) -> GeneratedTestFile:
+        return GeneratedTestFile(
+            source_file_path=generated.source_file_path,
+            test_file_path=generated.test_file_path,
+            pytest_code=_fix_mock_name_pattern(generated.pytest_code),
         )
 
     def _format_test_targets(self, task: TestWritingTask) -> str:
@@ -152,6 +163,56 @@ class TestWritingAgent(BaseAgent):
             STRUCTURED TEST TARGETS
             {formatted_test_targets}
 
+            COMMON MISTAKES TO AVOID
+            - When using @patch as a decorator, always add a corresponding positional
+            argument to the test function for each patch applied, in reverse order.
+            If the test does not need to interact with the mock, still declare the argument:
+
+            # WRONG - missing argument, will raise TypeError at runtime:
+            @patch('game.core.llm.completion')
+            def test_something():
+                ...
+
+            # CORRECT - one argument per @patch, in reverse decorator order:
+            @patch('game.core.llm.completion')
+            def test_something(mock_completion):
+                ...
+
+            - Only apply @patch when the scenario's MOCK TARGETS list is non-empty.
+            If MOCK TARGETS is empty, do not add any @patch decorators:
+
+            # WRONG - patching when mock_targets is []:
+            @patch('game.core.llm.completion')
+            def test_llm_init():
+                llm = LLM()
+                assert llm.model == 'openai/gpt-4o-mini'
+
+            # CORRECT - no patch when nothing needs to be mocked:
+            def test_llm_init():
+                llm = LLM()
+                assert llm.model == 'openai/gpt-4o-mini'
+
+            - When mocking objects with a 'name' attribute, never pass name= to MagicMock.
+            The name= constructor argument sets the mock's internal identifier and corrupts
+            the .name attribute — even if you assign .name afterward, it will not work:
+
+            # WRONG - name= constructor argument corrupts .name even with reassignment:
+            mock = MagicMock(name='action1')
+            mock.name = 'action1'  # does NOT fix it, .name still returns a child mock
+
+            # CORRECT - omit name= entirely, only set the attribute:
+            mock = MagicMock()
+            mock.name = 'action1'  # works correctly
+
+            - When asserting mock call arguments, always use keyword arguments in
+            assert_called_once_with if the actual function call uses keyword arguments:
+
+            # WRONG - positional when the real call uses keyword args:
+            mock_fn.assert_called_once_with(prompt)
+
+            # CORRECT - mirrors the actual call signature:
+            mock_fn.assert_called_once_with(prompt=prompt, max_tokens=None)
+
             RULES
             - Write only unit tests
             - Use only behaviors supported by the source code and structured design
@@ -165,9 +226,9 @@ class TestWritingAgent(BaseAgent):
             - When testing filesystem-dependent code, use pytest's tmp_path fixture
             and initialize path-dependent objects with tmp_path as the base directory
             - Call `return_generated_test_file` with raw Python source code when complete
-            - When patching imported functions, patch at the module where they are imported, 
-            not where they are defined. For example, if module 'game.core.llm' imports 
-            'completion' from 'litellm', the correct patch target is 'game.core.llm.completion', 
+            - When patching imported functions, patch at the module where they are imported,
+            not where they are defined. For example, if module 'game.core.llm' imports
+            'completion' from 'litellm', the correct patch target is 'game.core.llm.completion',
             not 'litellm.completion'
             """
         ).strip()

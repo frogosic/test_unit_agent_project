@@ -10,6 +10,8 @@ from game.models.unit_test_models import GeneratedTestFile
 from game.policies.file_security_policy import FileSecurityPolicy
 from game.services.generated_test_file_writer import write_generated_test_file
 from game.services.pytest_runner import validate_generated_test
+from game.services.code_fixups import _fix_mock_name_pattern
+
 
 logger = logging.getLogger(__name__)
 
@@ -142,17 +144,18 @@ def _derive_test_path(source_file_path: str) -> str:
 
 
 def _validate_generated_test_result(result: dict[str, Any]) -> str | None:
-    """
-    Validate a generated test file result from the return_generated_test_file action.
-    """
     inner = result.get("result", {})
     if not inner:
         return "No result data found."
 
+    fixed_code = _fix_mock_name_pattern(
+        inner.get("pytest_code", "")
+    )  # ← fix before validate
+
     generated = GeneratedTestFile(
         source_file_path=inner.get("source_file_path", ""),
         test_file_path=inner.get("test_file_path", ""),
-        pytest_code=inner.get("pytest_code", ""),
+        pytest_code=fixed_code,  # ← use fixed code
     )
     return validate_generated_test(generated)
 

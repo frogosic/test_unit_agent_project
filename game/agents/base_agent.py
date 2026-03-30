@@ -184,6 +184,7 @@ class BaseAgent:
         user_input: str,
         extract: Callable[[Memory], T],
         validate: Callable[[T], str | None] | None = None,
+        transform: Callable[[T], T] | None = None,  # ← add this
         action_context: ActionContext | None = None,
     ) -> T:
         last_error: Exception | None = None
@@ -215,6 +216,8 @@ class BaseAgent:
                     action_context=action_context,
                 )
                 result = extract(memory)
+                if transform is not None:  # ← add this block
+                    result = transform(result)
             except ValueError as e:
                 last_error = e
                 last_validation_error = None

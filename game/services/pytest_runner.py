@@ -113,6 +113,7 @@ def validate_generated_test(generated: GeneratedTestFile) -> str | None:
             generated.source_file_path,
             output,
         )
+        logger.debug("Generated test code that failed:\n%s", generated.pytest_code)
         return output
 
     except subprocess.TimeoutExpired:
