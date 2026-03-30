@@ -1,5 +1,32 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Literal
+
+
+@dataclass
+class FileProcessingStep:
+    file_path: str
+    status: Literal["pending", "designing", "writing", "complete", "failed"] = "pending"
+    test_design: TestDesignResult | None = None
+    generated_test: GeneratedTestFile | None = None
+    error: str | None = None
+
+
+@dataclass
+class UnitTestGenerationPlan:
+    target: str
+    steps: list[FileProcessingStep] = field(default_factory=list)
+    status: Literal["planning", "executing", "complete", "failed"] = "planning"
+
+    def pending_steps(self) -> list[FileProcessingStep]:
+        return [s for s in self.steps if s.status == "pending"]
+
+    def completed_steps(self) -> list[FileProcessingStep]:
+        return [s for s in self.steps if s.status == "complete"]
+
+    def failed_steps(self) -> list[FileProcessingStep]:
+        return [s for s in self.steps if s.status == "failed"]
 
 
 @dataclass
@@ -36,9 +63,9 @@ class TestTarget:
 @dataclass
 class TestWritingTask:
     source_file_path: str
-    source_code: str
     module_summary: str
     test_targets: list[TestTarget]
+    source_code: str = ""
 
 
 @dataclass
@@ -51,7 +78,7 @@ class TestDesignResult:
 @dataclass
 class TestDesignTask:
     file_path: str
-    source_code: str
+    source_code: str = ""
 
 
 @dataclass

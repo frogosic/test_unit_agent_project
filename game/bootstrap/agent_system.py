@@ -118,6 +118,9 @@ def build_agent_system(
         llm=llm,
         environment=environment,
         file_security_policy=file_security_policy,
+        file_ops_agent=file_ops_agent,
+        test_design_agent=test_design_agent,
+        test_writing_agent=test_writing_agent,
     )
 
     agent_registry = AgentRegistry()

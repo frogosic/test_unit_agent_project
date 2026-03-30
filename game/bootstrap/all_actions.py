@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from game.actions.call_agent import call_agent
 from game.actions.expert_actions import prompt_expert
 from game.actions.file_actions import (
     list_directories,
@@ -11,18 +10,19 @@ from game.actions.file_actions import (
 from game.actions.result_actions import (
     RETURN_GENERATED_TEST_FILE_ACTION,
     RETURN_TEST_DESIGN_RESULT_ACTION,
-    RETURN_UNIT_TEST_GENERATION_RESULT_ACTION,
 )
 from game.core.core_action import ActionRegistry
 from game.bootstrap.registry import build_action_registry
 
 
 def build_coordinator_action_registry() -> ActionRegistry:
+    """
+    Coordinator executes deterministically via Python.
+    terminate is kept as a safety valve if the LLM loop is ever entered.
+    """
     return build_action_registry(
         [
-            call_agent,
             terminate,
-            RETURN_UNIT_TEST_GENERATION_RESULT_ACTION,
         ]
     )
 
@@ -46,6 +46,7 @@ def build_test_design_action_registry() -> ActionRegistry:
     """
     return build_action_registry(
         [
+            read_file,
             prompt_expert,
             RETURN_TEST_DESIGN_RESULT_ACTION,
         ]
@@ -56,4 +57,9 @@ def build_test_writing_action_registry() -> ActionRegistry:
     """
     Test writing specialist actions.
     """
-    return build_action_registry([RETURN_GENERATED_TEST_FILE_ACTION])
+    return build_action_registry(
+        [
+            read_file,
+            RETURN_GENERATED_TEST_FILE_ACTION,
+        ]
+    )

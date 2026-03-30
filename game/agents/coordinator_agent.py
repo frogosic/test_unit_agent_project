@@ -6,28 +6,37 @@ from dataclasses import asdict
 from pathlib import Path
 
 from game.actions.action_context import ActionContext
-from game.models.unit_test_models import SourceFile
 from game.agents.base_agent import BaseAgent
+from game.agents.file_ops_agent import FileOpsAgent
+from game.agents.test_design_agent import TestDesignAgent
+from game.agents.test_writing_agent import TestWritingAgent
 from game.core.core_action import ActionRegistry, Goal
 from game.core.environment import Environment
 from game.core.llm import LLM
 from game.languages.tool_calling import AgentLanguage
 from game.models.unit_test_models import (
+    FileProcessingStep,
     GeneratedTestFile,
+    SourceFile,
     TestDesignResult,
+    TestDesignTask,
+    TestWritingTask,
+    UnitTestGenerationPlan,
     UnitTestGenerationResult,
 )
 from game.policies.file_security_policy import FileSecurityPolicy
+from game.services.generated_test_file_writer import write_generated_test_file
 
 logger = logging.getLogger(__name__)
 
 
 class CoordinatorAgent(BaseAgent):
     """
-    High-level orchestrator agent for the unit test generation workflow.
+    High-level orchestrator for unit test generation.
 
-    Delegates all work to specialist agents via call_agent.
-    Assembles the final structured result from delegation outputs.
+    Uses a two-phase approach:
+    1. Plan — discover files and build a lightweight plan (file paths only)
+    2. Execute — process each file deterministically via specialist agents
     """
 
     AGENT_NAME = "coordinator_agent"
@@ -39,7 +48,11 @@ class CoordinatorAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
-        max_iterations: int = 80,
+        file_ops_agent: FileOpsAgent,
+        test_design_agent: TestDesignAgent,
+        test_writing_agent: TestWritingAgent,
+        max_iterations: int = 10,
+        max_retries: int = 3,
     ) -> None:
         super().__init__(
             name=self.AGENT_NAME,
@@ -48,33 +61,14 @@ class CoordinatorAgent(BaseAgent):
                     priority=1,
                     name="coordinate_unit_test_generation",
                     description=(
-                        "Coordinate end-to-end pytest unit test generation for a target path.\n\n"
-                        "WORKFLOW — follow this exact sequence:\n\n"
-                        "1. DISCOVER FILES\n"
-                        "   Call file_ops_agent with the target path.\n"
-                        "   The result contains a list of source files, each with 'path' and 'content'.\n\n"
-                        "2. FOR EACH SOURCE FILE — repeat steps 2a and 2b for every file:\n\n"
-                        "   2a. DESIGN TESTS\n"
-                        "       Call test_design_agent.\n"
-                        "       The task MUST include:\n"
-                        "       - FILE PATH: the exact file path\n"
-                        "       - SOURCE CODE: the complete source code content from the discovery result\n\n"
-                        "   2b. GENERATE TESTS\n"
-                        "       Call test_writing_agent.\n"
-                        "       The task MUST include:\n"
-                        "       - FILE PATH: the exact file path\n"
-                        "       - SOURCE CODE: the complete source code content\n"
-                        "       - MODULE SUMMARY: from the test design result\n"
-                        "       - TEST TARGETS: the full test_targets list from the test design result\n\n"
-                        "3. FINALIZE\n"
-                        "   Once ALL files are processed, call return_unit_test_generation_result\n"
-                        "   with every generated test result and a short summary.\n\n"
-                        "RULES\n"
-                        "- Always include full source code in tasks — agents have no memory of prior calls\n"
-                        "- Process every discovered file — do not skip any\n"
-                        "- Do not call return_unit_test_generation_result until all files are done\n"
-                        "- Do not call terminate — use return_unit_test_generation_result to finish\n"
-                        "- If the target path is a single file, process only that file"
+                        "Coordinate end-to-end pytest unit test generation.\n\n"
+                        "Your only job is to discover Python source files "
+                        "in the target path and return their file paths.\n\n"
+                        "Call file_ops_agent with the target path.\n"
+                        "Once you have the file list, call return_unit_test_generation_result "
+                        "with the list of file paths.\n\n"
+                        "Do not design tests. Do not generate code. "
+                        "Only discover files and return the plan."
                     ),
                 )
             ],
@@ -84,105 +78,152 @@ class CoordinatorAgent(BaseAgent):
             environment=environment,
             file_security_policy=file_security_policy,
             max_iterations=max_iterations,
+            max_retries=max_retries,
         )
+        self.file_ops_agent = file_ops_agent
+        self.test_design_agent = test_design_agent
+        self.test_writing_agent = test_writing_agent
 
     def run_unit_test_generation(
         self,
         target_directory: str,
         action_context: ActionContext | None = None,
     ) -> UnitTestGenerationResult:
-        """
-        Entry point for unit test generation.
-        Runs the coordinator agent loop and assembles the final result.
-        """
         logger.info("Starting unit test generation for: %s", target_directory)
 
-        run_memory = self.run(
-            user_input=(
-                f"Generate pytest unit tests for the following target path: {target_directory}\n\n"
-                f"If it is a single Python file, process only that file.\n"
-                f"If it is a directory, process all relevant Python source files found."
-            ),
+        execution_context = self._build_execution_context(action_context)
+
+        plan = self._build_plan(target_directory, execution_context)
+        logger.info("Plan built — %d files to process", len(plan.steps))
+
+        return self._execute_plan(plan, execution_context)
+
+    def _build_plan(
+        self,
+        target_directory: str,
+        action_context: ActionContext,
+    ) -> UnitTestGenerationPlan:
+        """
+        Phase 1 — discover files and build a lightweight plan.
+        Uses FileOpsAgent directly since we own it.
+        """
+        discovery_result = self.file_ops_agent.run_and_parse(
+            target_directory=target_directory,
             action_context=action_context,
         )
 
-        return self._extract_unit_test_generation_result(
-            run_memory=run_memory,
-            target_directory=target_directory,
+        steps = [
+            FileProcessingStep(file_path=source_file.path)
+            for source_file in discovery_result.files
+        ]
+
+        return UnitTestGenerationPlan(
+            target=target_directory,
+            steps=steps,
+            status="executing",
         )
 
-    def _extract_unit_test_generation_result(
+    def _execute_plan(
         self,
-        run_memory,
-        target_directory: str,
+        plan: UnitTestGenerationPlan,
+        action_context: ActionContext,
     ) -> UnitTestGenerationResult:
-        for item in reversed(run_memory.get_memories()):
-            if item.get("role") != "tool":
+        """
+        Phase 2 — execute each step deterministically.
+        Specialists fetch their own source code via read_file.
+        """
+        for step in plan.steps:
+            logger.info("Processing: %s", step.file_path)
+            step.status = "designing"
+
+            try:
+                test_design = self.test_design_agent.run_and_parse(
+                    task=TestDesignTask(file_path=step.file_path),
+                    action_context=action_context,
+                )
+                step.test_design = test_design
+                step.status = "writing"
+                logger.info("Design complete: %s", step.file_path)
+
+            except Exception as e:
+                logger.error("Design failed for %s: %s", step.file_path, e)
+                step.status = "failed"
+                step.error = str(e)
                 continue
 
             try:
-                payload = json.loads(item["content"])
-            except (KeyError, json.JSONDecodeError):
+                generated_test = self.test_writing_agent.run_and_parse(
+                    task=TestWritingTask(
+                        source_file_path=test_design.file_path,
+                        module_summary=test_design.module_summary,
+                        test_targets=test_design.test_targets,
+                    ),
+                    action_context=action_context,
+                )
+                step.generated_test = generated_test
+                step.status = "complete"
+                logger.info("Tests generated: %s", step.file_path)
+
+            except Exception as e:
+                logger.error("Writing failed for %s: %s", step.file_path, e)
+                step.status = "failed"
+                step.error = str(e)
                 continue
 
-            inner = payload.get("result", {})
-            if inner.get("result_type") != "unit_test_generation_result":
+            try:
+                write_generated_test_file(
+                    generated_test=generated_test,
+                    file_security_policy=self.file_security_policy,
+                )
+                logger.info("Written: %s", generated_test.test_file_path)
+            except Exception as e:
+                import traceback as tb
+
+                logger.error(
+                    "Writing failed for %s: %s\n%s",
+                    step.file_path,
+                    e,
+                    tb.format_exc(),
+                )
+                step.status = "failed"
+                step.error = str(e)
                 continue
 
-            generated_tests = [
-                GeneratedTestFile(
-                    source_file_path=t["source_file_path"],
-                    test_file_path=t["test_file_path"],
-                    pytest_code=t["pytest_code"],
-                )
-                for t in inner.get("generated_tests", [])
-            ]
+        plan.status = "complete"
+        return self._build_result(plan)
 
-            discovered_files = [
-                SourceFile(
-                    path=t.source_file_path,
-                    content="",
-                    file_type="python",
-                )
-                for t in generated_tests
-            ]
+    def _build_result(
+        self,
+        plan: UnitTestGenerationPlan,
+    ) -> UnitTestGenerationResult:
+        completed = plan.completed_steps()
+        failed = plan.failed_steps()
 
-            return UnitTestGenerationResult(
-                target_directory=target_directory,
-                discovered_files=discovered_files,
-                test_designs=[],
-                generated_tests=generated_tests,
-                summary=inner.get("summary", ""),
+        discovered_files = [
+            SourceFile(path=step.file_path, content="", file_type="python")
+            for step in plan.steps
+        ]
+
+        generated_tests = [
+            step.generated_test for step in completed if step.generated_test is not None
+        ]
+
+        summary_parts = [
+            f"Discovered {len(plan.steps)} source files.",
+            f"Generated {len(generated_tests)} test files.",
+        ]
+        if failed:
+            summary_parts.append(
+                f"{len(failed)} file(s) failed: "
+                + ", ".join(s.file_path for s in failed)
             )
 
-        logger.warning(
-            "Coordinator did not produce a structured result — returning empty result."
-        )
         return UnitTestGenerationResult(
-            target_directory=target_directory,
-            summary="Generation did not complete successfully.",
-        )
-
-    def _write_debug_snapshot(
-        self,
-        source_file_path: str,
-        test_design: TestDesignResult,
-        generated_test: GeneratedTestFile,
-    ) -> None:
-        debug_dir = Path("debug/unit_test_generation")
-        debug_dir.mkdir(parents=True, exist_ok=True)
-
-        source_path = Path(source_file_path)
-        safe_stem = "_".join([*source_path.parent.parts, source_path.stem]).lstrip("_")
-
-        design_path = debug_dir / f"{safe_stem}_design.json"
-        generated_test_path = debug_dir / f"{safe_stem}_generated_test.py"
-
-        design_path.write_text(
-            json.dumps(asdict(test_design), indent=2),
-            encoding="utf-8",
-        )
-        generated_test_path.write_text(
-            generated_test.pytest_code,
-            encoding="utf-8",
+            target_directory=plan.target,
+            discovered_files=discovered_files,
+            test_designs=[
+                step.test_design for step in completed if step.test_design is not None
+            ],
+            generated_tests=generated_tests,
+            summary=" ".join(summary_parts),
         )

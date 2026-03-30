@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +9,7 @@ from game.core.core_action import Action
 from game.models.unit_test_models import GeneratedTestFile
 from game.policies.file_security_policy import FileSecurityPolicy
 from game.services.generated_test_file_writer import write_generated_test_file
+from game.services.pytest_runner import validate_generated_test
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +141,22 @@ def _derive_test_path(source_file_path: str) -> str:
     return str(Path("tests") / source.parent / f"test_{source.name}")
 
 
+def _validate_generated_test_result(result: dict[str, Any]) -> str | None:
+    """
+    Validate a generated test file result from the return_generated_test_file action.
+    """
+    inner = result.get("result", {})
+    if not inner:
+        return "No result data found."
+
+    generated = GeneratedTestFile(
+        source_file_path=inner.get("source_file_path", ""),
+        test_file_path=inner.get("test_file_path", ""),
+        pytest_code=inner.get("pytest_code", ""),
+    )
+    return validate_generated_test(generated)
+
+
 RETURN_TEST_DESIGN_RESULT_ACTION = Action(
     name="return_test_design_result",
     function=return_test_design_result,
@@ -219,6 +234,7 @@ RETURN_TEST_DESIGN_RESULT_ACTION = Action(
 RETURN_GENERATED_TEST_FILE_ACTION = Action(
     name="return_generated_test_file",
     function=return_generated_test_file,
+    validator=_validate_generated_test_result,
     description=(
         "Return the final generated pytest unit test file. "
         "Call this with source_file_path and pytest_code ONLY. "
@@ -235,7 +251,7 @@ RETURN_GENERATED_TEST_FILE_ACTION = Action(
             },
             "pytest_code": {
                 "type": "string",
-                "description": "The generated pytest code. Raw Python only, no markdown.",
+                "description": "Raw Python pytest code only. No markdown fences.",
             },
         },
         "required": ["source_file_path", "pytest_code"],

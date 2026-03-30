@@ -30,7 +30,7 @@ class TestWritingAgent(BaseAgent):
         llm: LLM,
         environment: Environment,
         file_security_policy: FileSecurityPolicy,
-        max_iterations: int = 10,
+        max_iterations: int = 15,
         max_retries: int = 3,
     ) -> None:
         super().__init__(
@@ -136,13 +136,15 @@ class TestWritingAgent(BaseAgent):
 
         return dedent(
             f"""
-            You are a senior Python test engineer generating pytest unit tests from real source code.
+            You are a senior Python test engineer generating pytest unit tests.
 
             SOURCE FILE PATH
             {task.source_file_path}
 
-            SOURCE CODE
-            {task.source_code}
+            INSTRUCTIONS
+            - Use the read_file action to read the source file at the path above
+            - Use the structured test design below to write grounded pytest tests
+            - Finish by calling `return_generated_test_file` with raw Python code
 
             MODULE SUMMARY
             {task.module_summary}
@@ -152,17 +154,21 @@ class TestWritingAgent(BaseAgent):
 
             RULES
             - Write only unit tests
-            - Use only behaviors supported by the provided source code and structured design
-            - Every generated test must map to a real scenario from the structured test targets
-            - Use the scenario INPUTS as hints for setup and invocation
-            - Use the scenario ASSERTIONS as the basis for test expectations
-            - Use the scenario MOCK TARGETS when patching collaborators or dependencies
-            - Do not invent return values, fields, exception messages, or object structures
-            - Do not invent dependencies not present in the source code or structured design
+            - Use only behaviors supported by the source code and structured design
+            - Every test must map to a real scenario from the structured test targets
+            - Use scenario INPUTS as hints for setup and invocation
+            - Use scenario ASSERTIONS as the basis for test expectations
+            - Use scenario MOCK TARGETS when patching collaborators
+            - Do not invent return values, fields, or exception messages
             - No placeholder assertions
             - No markdown fences
-            - Prefer a few grounded tests over many speculative tests
+            - When testing filesystem-dependent code, use pytest's tmp_path fixture
+            and initialize path-dependent objects with tmp_path as the base directory
             - Call `return_generated_test_file` with raw Python source code when complete
+            - When patching imported functions, patch at the module where they are imported, 
+            not where they are defined. For example, if module 'game.core.llm' imports 
+            'completion' from 'litellm', the correct patch target is 'game.core.llm.completion', 
+            not 'litellm.completion'
             """
         ).strip()
 

@@ -84,7 +84,7 @@ class TestDesignAgent(BaseAgent):
                 scenarios = [
                     TestScenario(
                         name=scenario["name"],
-                        description=scenario["description"],
+                        description=scenario.get("description"),
                         inputs=scenario.get("inputs", []),
                         assertions=scenario.get("assertions", []),
                         mock_targets=scenario.get("mock_targets", []),
@@ -94,8 +94,8 @@ class TestDesignAgent(BaseAgent):
 
                 test_targets.append(
                     TestTarget(
-                        name=target_data["name"],
-                        target_type=target_data["target_type"],
+                        name=target_data.get("name"),
+                        target_type=target_data.get("target_type"),
                         dependencies_to_mock=target_data.get(
                             "dependencies_to_mock", []
                         ),
@@ -112,7 +112,7 @@ class TestDesignAgent(BaseAgent):
                 )
             except KeyError as e:
                 raise ValueError(
-                    f"TestDesignAgent result is missing required field: {e}"
+                    f"TestDesignAgent result missing required field: {e}"
                 ) from e
 
         raise ValueError("TestDesignAgent did not produce a valid test_design result.")
@@ -125,25 +125,21 @@ class TestDesignAgent(BaseAgent):
             FILE PATH
             {task.file_path}
 
-            SOURCE CODE
-            {task.source_code}
+            INSTRUCTIONS
+            - Use the read_file action to read the source file at the path above
+            - Analyze the source code for unit-testable targets
+            - Finish by calling `return_test_design_result` with the structured design
 
             RULES
-            - Identify only real unit-testable functions, methods, or classes visible in the source code
+            - Identify only real unit-testable functions, methods, or classes
             - Distinguish business logic from integration boundaries
             - Identify real collaborators or dependencies that may need mocking
             - Propose only scenarios grounded in the implementation
             - Do not invent hidden behavior
             - Do not write pytest code
             - Prefer fewer high-confidence scenarios over many speculative ones
-            - For each scenario, provide:
-            - a clear scenario name
-            - a short description
-            - concrete inputs or setup hints as a list of strings
-            - observable assertions as a list of strings
-            - mock targets as a list of strings
             - Assertions must reflect only behavior visible in the code
-            - Mock targets must refer only to real collaborators/dependencies visible in the code
+            - Mock targets must refer only to real collaborators visible in the code
             - Finish by calling `return_test_design_result` with the final structured result
             """
         ).strip()

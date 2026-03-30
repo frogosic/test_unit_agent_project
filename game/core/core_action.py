@@ -26,12 +26,14 @@ class Action:
         description: str,
         parameters: dict[str, Any],
         terminal: bool = False,
+        validator: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> None:
         self.name = name
         self.function = function
         self.description = description
         self.parameters = parameters
         self.terminal = terminal
+        self.validator = validator
 
     def execute(self, action_context: ActionContext | None = None, **args: Any) -> Any:
         signature = inspect.signature(self.function)

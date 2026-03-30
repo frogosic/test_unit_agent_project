@@ -13,6 +13,7 @@ from game.core.memory import Memory
 from game.policies.file_security_policy import FileSecurityPolicy
 
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -115,6 +116,47 @@ class BaseAgent:
                 return StopReason.TOOL_ERROR
 
             if action.terminal:
+                if action.validator is not None:
+                    terminal_attempts = sum(
+                        1
+                        for m in memory.get_memories()
+                        if m.get("role") == "assistant"
+                        and any(
+                            tc.get("function", {}).get("name") == action.name
+                            for tc in m.get("tool_calls", [])
+                        )
+                    )
+
+                    validation_error = action.validator(result)
+                    if validation_error is not None:
+                        if terminal_attempts >= 3:  # hard cap
+                            logger.warning(
+                                "Action %s failed validation %d times — stopping loop",
+                                action.name,
+                                terminal_attempts,
+                            )
+                            memory.add_memory(
+                                {
+                                    "role": "assistant",
+                                    "content": f"Stopped after {terminal_attempts} failed validation attempts.",
+                                }
+                            )
+                            return StopReason.TOOL_ERROR
+
+                        memory._memories[-1] = {
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": json.dumps(
+                                {
+                                    "tool_executed": False,
+                                    "error": (
+                                        f"Validation failed for {action.name}. "
+                                        f"Fix the following issues and try again:\n{validation_error}"
+                                    ),
+                                }
+                            ),
+                        }
+                        return None
                 return StopReason.TERMINAL_ACTION
 
         return None

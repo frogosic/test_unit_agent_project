@@ -1,44 +1,52 @@
 import pytest
+from unittest.mock import Mock
+import json
 from game.core.memory import Memory
 
 
-@pytest.fixture
-def memory():
-    return Memory()
-
-
-def test_add_memory(memory):
-    test_memory = {'key': 'value'}
-    memory.add_memory(test_memory)
-    assert memory.get_memories() == [test_memory]
-
-
-def test_add_user_message(memory):
-    content = 'Hello, world!'
-    memory.add_user_message(content)
-    assert memory.get_memories() == [{'role': 'user', 'content': content}]
-
-
-def test_add_assistant_message(memory):
-    class MockMessage:
-        def __init__(self, content, tool_calls=None):
-            self.content = content
-            self.tool_calls = tool_calls or []
-
-    message = MockMessage('Assistant response')
-    memory.add_assistant_message(message)
-    assert memory.get_memories()[-1] == {'role': 'assistant', 'content': 'Assistant response'}
-
-
-def test_add_tool_result(memory):
-    tool_call_id = '123'
-    result = {'result_key': 'result_value'}
-    memory.add_tool_result(tool_call_id, result)
-    assert memory.get_memories()[-1] == {'role': 'tool', 'tool_call_id': tool_call_id, 'content': '{"result_key": "result_value"}'}
-
-
-def test_get_memories(memory):
-    assert memory.get_memories() == []
-    memory.add_user_message('Test message')
+def test_add_memory():
+    memory = Memory()
+    memory.add_memory({'key': 'value'})
     assert len(memory.get_memories()) == 1
-    assert memory.get_memories()[0]['role'] == 'user'
+    assert memory.get_memories()[0] == {'key': 'value'}
+
+
+def test_add_user_message():
+    memory = Memory()
+    memory.add_user_message('Hello, world!')
+    assert len(memory.get_memories()) == 1
+    assert memory.get_memories()[0] == {'role': 'user', 'content': 'Hello, world!'}
+
+
+def test_add_assistant_message():
+    memory = Memory()
+    mock_message = Mock()
+    mock_message.content = 'Hello from assistant'
+    mock_message.tool_calls = []
+    memory.add_assistant_message(mock_message)
+    assert len(memory.get_memories()) == 1
+    assert memory.get_memories()[0] == {'role': 'assistant', 'content': 'Hello from assistant'}
+
+
+def test_add_assistant_message_with_tool_calls():
+    memory = Memory()
+    mock_function = Mock(name='example_function', arguments={})
+    mock_tool_call = Mock(id='1', type='example', function=mock_function)
+    mock_message = Mock()
+    mock_message.content = 'Hello from assistant'
+    mock_message.tool_calls = [mock_tool_call]
+    memory.add_assistant_message(mock_message)
+    assert len(memory.get_memories()) == 1
+    assert memory.get_memories()[0]['tool_calls'][0]['id'] == '1'
+
+
+def test_add_tool_result():
+    memory = Memory()
+    memory.add_tool_result('tool_call_1', {'result': 'success'})
+    assert len(memory.get_memories()) == 1
+    assert memory.get_memories()[0] == {'role': 'tool', 'tool_call_id': 'tool_call_1', 'content': json.dumps({'result': 'success'})}
+
+
+def test_get_memories():
+    memory = Memory()
+    assert len(memory.get_memories()) == 0
